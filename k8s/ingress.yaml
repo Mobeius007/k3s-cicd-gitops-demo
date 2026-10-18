@@ -1,0 +1,16 @@
+# K3s ships with Traefik as the ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-service
+spec:
+  rules:
+    - host: demo.example.com   # change to your domain, or use: curl -H "Host: demo.example.com" http://<node-ip>
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-service
+                port: { number: 80 }

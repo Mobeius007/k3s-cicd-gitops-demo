@@ -1,0 +1,69 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
+        working-directory: app
+
+  build:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: APP_VERSION=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Requires the KUBE_CONFIG secret (see README). The job is skipped cleanly if it is not set.
+    env:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure kubectl
+        if: env.KUBE_CONFIG != ''
+        run: |
+          mkdir -p ~/.kube
+          echo "$KUBE_CONFIG" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Deploy
+        if: env.KUBE_CONFIG != ''
+        run: |
+          cd k8s
+          kustomize edit set image ghcr.io/mobeius007/k3s-cicd-gitops-demo=${{ env.IMAGE }}:${{ github.sha }}
+          kubectl apply -k .
+          kubectl -n demo rollout status deployment/demo-service --timeout=120s
